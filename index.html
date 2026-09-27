@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <title>Mein Browser-Chat</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      background: #111;
+      color: #eee;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      margin: 0;
+    }
+    #chat {
+      flex: 1;
+      padding: 10px;
+      overflow-y: auto;
+      border-bottom: 1px solid #333;
+    }
+    .msg {
+      margin: 5px 0;
+      padding: 8px 10px;
+      border-radius: 6px;
+      max-width: 70%;
+    }
+    .user {
+      background: #2b6cb0;
+      margin-left: auto;
+    }
+    .bot {
+      background: #2f855a;
+      margin-right: auto;
+    }
+    #input-area {
+      display: flex;
+      padding: 10px;
+      gap: 8px;
+    }
+    #user-input {
+      flex: 1;
+      padding: 8px;
+      border-radius: 4px;
+      border: 1px solid #444;
+      background: #222;
+      color: #eee;
+    }
+    button {
+      padding: 8px 14px;
+      border-radius: 4px;
+      border: none;
+      background: #3182ce;
+      color: #fff;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #2b6cb0;
+    }
+  </style>
+</head>
+<body>
+  <div id="chat"></div>
+
+  <div id="input-area">
+    <input id="user-input" type="text" placeholder="Schreib etwas..." />
+    <button id="send-btn">Senden</button>
+  </div>
+
+  <script src="model.js"></script>
+  <script>
+    const chat = document.getElementById('chat');
+    const input = document.getElementById('user-input');
+    const sendBtn = document.getElementById('send-btn');
+
+    function addMessage(text, type) {
+      const div = document.createElement('div');
+      div.className = 'msg ' + type;
+      div.textContent = text;
+      chat.appendChild(div);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    async function handleSend() {
+      const text = input.value.trim();
+      if (!text) return;
+      addMessage(text, 'user');
+      input.value = '';
+
+      const reply = await window.myModel.generate(text);
+      addMessage(reply, 'bot');
+    }
+
+    sendBtn.addEventListener('click', handleSend);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') handleSend();
+    });
+
+    // Modell initialisieren
+    (async () => {
+      addMessage('Lade Modell...', 'bot');
+      await window.myModel.init();
+      addMessage('Modell bereit. Frag mich etwas!', 'bot');
+    })();
+  </script>
+</body>
+</html>
