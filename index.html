@@ -2,7 +2,7 @@
 <html lang="de">
 <head>
   <meta charset="UTF-8" />
-  <title>Simple KI Chat</title>
+  <title>JSON KI</title>
   <style>
     body { font-family: sans-serif; max-width: 600px; margin: 40px auto; }
     #chat { border: 1px solid #ccc; padding: 10px; min-height: 200px; }
@@ -12,11 +12,12 @@
   </style>
 </head>
 <body>
-  <h1>Simple KI Chat</h1>
+  <h1>JSON KI</h1>
+
   <div id="chat"></div>
 
   <form id="chat-form">
-    <input id="user-input" type="text" placeholder="Schreib etwas..." style="width: 80%;" required />
+    <input id="user-input" type="text" placeholder="Frage mich etwas..." style="width: 80%;" required />
     <button type="submit">Senden</button>
   </form>
 
@@ -38,6 +39,7 @@
       e.preventDefault();
       const text = input.value.trim();
       if (!text) return;
+
       addMessage(text, 'user');
       input.value = '';
 
