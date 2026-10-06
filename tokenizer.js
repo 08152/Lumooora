@@ -1,7 +1,3 @@
-```js
-// tokenizer.js
-// Eigener Tokenizer für Lumora
-
 function normalize(text) {
     return String(text || "")
         .normalize("NFKC")
@@ -24,13 +20,25 @@ function words(text) {
 }
 
 function containsWord(text, word) {
-    return words(text).includes(normalize(word));
+    const tokenList = words(text);
+    const wanted = normalize(word);
+
+    return tokenList.includes(wanted);
+}
+
+function countTokens(text) {
+    return tokenize(text).length;
+}
+
+function countWords(text) {
+    return words(text).length;
 }
 
 module.exports = {
     normalize,
     tokenize,
     words,
-    containsWord
+    containsWord,
+    countTokens,
+    countWords
 };
-```
