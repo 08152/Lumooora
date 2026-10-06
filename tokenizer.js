@@ -20,10 +20,7 @@ function words(text) {
 }
 
 function containsWord(text, word) {
-    const tokenList = words(text);
-    const wanted = normalize(word);
-
-    return tokenList.includes(wanted);
+    return words(text).includes(normalize(word));
 }
 
 function countTokens(text) {
