@@ -1,1 +1,627 @@
+<!DOCTYPE html>
+<html lang="de">
 
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Lumora KI</title>
+
+    <style>
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background: #0b1020;
+            color: white;
+        }
+
+        .container {
+            width: min(1100px, 95%);
+            margin: auto;
+            padding: 20px;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .logo {
+            font-size: 32px;
+            font-weight: bold;
+        }
+
+        .online {
+            padding: 8px 12px;
+            border-radius: 20px;
+            background: #17213a;
+            font-size: 13px;
+        }
+
+        .layout {
+            display: grid;
+            grid-template-columns: 1.4fr 1fr;
+            gap: 20px;
+        }
+
+        .panel {
+            background: #11182b;
+            border: 1px solid #273250;
+            border-radius: 20px;
+            padding: 18px;
+        }
+
+        .chat {
+            height: 550px;
+            overflow-y: auto;
+            padding: 10px;
+        }
+
+        .message {
+            margin-bottom: 14px;
+        }
+
+        .message.user {
+            text-align: right;
+        }
+
+        .bubble {
+            display: inline-block;
+            padding: 12px 16px;
+            border-radius: 15px;
+            max-width: 80%;
+            white-space: pre-wrap;
+        }
+
+        .assistant .bubble {
+            background: #1e2945;
+        }
+
+        .user .bubble {
+            background: #4b5de7;
+        }
+
+        .composer {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        input,
+        textarea,
+        select {
+            width: 100%;
+            padding: 12px;
+            background: #0d1426;
+            color: white;
+            border: 1px solid #2b3858;
+            border-radius: 12px;
+            outline: none;
+        }
+
+        input {
+            flex: 1;
+        }
+
+        textarea {
+            min-height: 110px;
+            resize: vertical;
+        }
+
+        button {
+            border: none;
+            border-radius: 12px;
+            padding: 12px 16px;
+            background: #4b5de7;
+            color: white;
+            cursor: pointer;
+        }
+
+        button:hover {
+            opacity: .9;
+        }
+
+        .row {
+            display: flex;
+            gap: 8px;
+            margin-top: 10px;
+        }
+
+        h2 {
+            margin-top: 0;
+        }
+
+        h3 {
+            margin-top: 25px;
+            color: #aeb9d7;
+        }
+
+        pre {
+            background: #0b1020;
+            border: 1px solid #25304d;
+            border-radius: 12px;
+            padding: 12px;
+            white-space: pre-wrap;
+            word-break: break-word;
+            min-height: 50px;
+        }
+
+        .confidence {
+            font-size: 11px;
+            opacity: .55;
+            margin-top: 5px;
+        }
+
+        @media (max-width: 800px) {
+
+            .layout {
+                grid-template-columns: 1fr;
+            }
+
+            .chat {
+                height: 450px;
+            }
+
+        }
+
+    </style>
+</head>
+
+<body>
+
+<div class="container">
+
+    <header>
+
+        <div class="logo">
+            LUMORA
+        </div>
+
+        <div class="online" id="status">
+            Verbinde...
+        </div>
+
+    </header>
+
+    <div class="layout">
+
+        <!-- CHAT -->
+
+        <section class="panel">
+
+            <h2>
+                KI Chat
+            </h2>
+
+            <div
+                class="chat"
+                id="chat"
+            ></div>
+
+            <form
+                class="composer"
+                id="chatForm"
+            >
+
+                <input
+                    id="message"
+                    placeholder="Schreibe etwas..."
+                    autocomplete="off"
+                >
+
+                <button>
+                    Senden
+                </button>
+
+            </form>
+
+        </section>
+
+        <!-- TOOLS -->
+
+        <section class="panel">
+
+            <h2>
+                KI-Werkzeuge
+            </h2>
+
+            <h3>
+                Tokenizer
+            </h3>
+
+            <textarea
+                id="tokenInput"
+                placeholder="Text eingeben..."
+            ></textarea>
+
+            <div class="row">
+
+                <button onclick="tokenizeText()">
+                    Tokenisieren
+                </button>
+
+            </div>
+
+            <pre id="tokenOutput">
+Noch keine Tokens.
+            </pre>
+
+
+            <h3>
+                Übersetzer
+            </h3>
+
+            <div class="row">
+
+                <select id="from">
+
+                    <option value="de">
+                        Deutsch
+                    </option>
+
+                    <option value="en">
+                        Englisch
+                    </option>
+
+                </select>
+
+                <select id="to">
+
+                    <option value="en">
+                        Englisch
+                    </option>
+
+                    <option value="de">
+                        Deutsch
+                    </option>
+
+                </select>
+
+            </div>
+
+            <textarea
+                id="translateInput"
+                placeholder="Text eingeben..."
+            ></textarea>
+
+            <div class="row">
+
+                <button onclick="translateText()">
+                    Übersetzen
+                </button>
+
+            </div>
+
+            <pre id="translateOutput">
+Noch keine Übersetzung.
+            </pre>
+
+        </section>
+
+    </div>
+
+</div>
+
+
+<script>
+
+/* =========================================================
+   CHAT
+========================================================= */
+
+const chat = document.getElementById("chat");
+
+const form = document.getElementById("chatForm");
+
+const messageInput =
+    document.getElementById("message");
+
+
+function addMessage(
+    text,
+    type,
+    confidence = null
+) {
+
+    const wrapper =
+        document.createElement("div");
+
+    wrapper.className =
+        "message " + type;
+
+
+    const bubble =
+        document.createElement("div");
+
+    bubble.className =
+        "bubble";
+
+    bubble.textContent =
+        text;
+
+
+    wrapper.appendChild(
+        bubble
+    );
+
+
+    if (
+        confidence !== null
+    ) {
+
+        const info =
+            document.createElement("div");
+
+        info.className =
+            "confidence";
+
+        info.textContent =
+            "Treffer: " +
+            Math.round(
+                confidence * 100
+            ) +
+            "%";
+
+        wrapper.appendChild(
+            info
+        );
+
+    }
+
+
+    chat.appendChild(
+        wrapper
+    );
+
+
+    chat.scrollTop =
+        chat.scrollHeight;
+}
+
+
+/* =========================================================
+   CHAT REQUEST
+========================================================= */
+
+form.addEventListener(
+    "submit",
+    async function(event) {
+
+        event.preventDefault();
+
+
+        const message =
+            messageInput.value.trim();
+
+
+        if (!message) {
+            return;
+        }
+
+
+        addMessage(
+            message,
+            "user"
+        );
+
+
+        messageInput.value = "";
+
+
+        try {
+
+            const response =
+                await fetch(
+                    "/api/chat",
+                    {
+                        method: "POST",
+
+                        headers: {
+                            "Content-Type":
+                                "application/json"
+                        },
+
+                        body:
+                            JSON.stringify({
+                                message
+                            })
+                    }
+                );
+
+
+            const data =
+                await response.json();
+
+
+            addMessage(
+                data.answer,
+                "assistant",
+                data.confidence
+            );
+
+
+        } catch (error) {
+
+            addMessage(
+                "Serverfehler.",
+                "assistant"
+            );
+
+        }
+
+    }
+);
+
+
+/* =========================================================
+   TOKENIZER
+========================================================= */
+
+async function tokenizeText() {
+
+    const text =
+        document.getElementById(
+            "tokenInput"
+        ).value;
+
+
+    if (!text.trim()) {
+        return;
+    }
+
+
+    const response =
+        await fetch(
+            "/api/tokenize",
+            {
+                method: "POST",
+
+                headers: {
+                    "Content-Type":
+                        "application/json"
+                },
+
+                body:
+                    JSON.stringify({
+                        text
+                    })
+            }
+        );
+
+
+    const data =
+        await response.json();
+
+
+    document.getElementById(
+        "tokenOutput"
+    ).textContent =
+        data.tokens
+            .map(
+                (token, index) =>
+                    index +
+                    ": " +
+                    token
+            )
+            .join("\n");
+}
+
+
+/* =========================================================
+   ÜBERSETZER
+========================================================= */
+
+async function translateText() {
+
+    const text =
+        document.getElementById(
+            "translateInput"
+        ).value;
+
+
+    const from =
+        document.getElementById(
+            "from"
+        ).value;
+
+
+    const to =
+        document.getElementById(
+            "to"
+        ).value;
+
+
+    if (!text.trim()) {
+        return;
+    }
+
+
+    const response =
+        await fetch(
+            "/api/translate",
+            {
+                method: "POST",
+
+                headers: {
+                    "Content-Type":
+                        "application/json"
+                },
+
+                body:
+                    JSON.stringify({
+                        text,
+                        from,
+                        to
+                    })
+            }
+        );
+
+
+    const data =
+        await response.json();
+
+
+    document.getElementById(
+        "translateOutput"
+    ).textContent =
+        data.translation;
+}
+
+
+/* =========================================================
+   STATUS
+========================================================= */
+
+async function checkServer() {
+
+    try {
+
+        const response =
+            await fetch(
+                "/api/health"
+            );
+
+
+        const data =
+            await response.json();
+
+
+        document.getElementById(
+            "status"
+        ).textContent =
+            "● Lumora Online";
+
+
+        addMessage(
+            "Hallo! Ich bin Lumora. Ich habe einen eigenen Tokenizer und Übersetzer.",
+            "assistant"
+        );
+
+
+    } catch {
+
+        document.getElementById(
+            "status"
+        ).textContent =
+            "● Fehler";
+
+    }
+
+}
+
+
+checkServer();
+
+messageInput.focus();
+
+</script>
+
+</body>
+</html>
