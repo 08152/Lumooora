@@ -1,322 +1,715 @@
 const express = require("express");
 const path = require("path");
+const { spawn } = require("child_process");
+const crypto = require("crypto");
 
 const {
     normalize,
     tokenize,
-    words,
-    containsWord
+    words
 } = require("./tokenizer");
 
 const app = express();
-const PORT = process.env.PORT || 10000;
 
-app.use(express.json({ limit: "2mb" }));
+const PORT =
+    Number(process.env.PORT || 10000);
 
-app.get("/", (req, res) => {
-    res.sendFile(path.join(__dirname, "index.html"));
-});
+const PYTHON =
+    process.env.PYTHON_BIN || "python3";
 
-/* =========================
-   EIGENES WISSEN
-========================= */
+const WORKER_FILE =
+    path.join(
+        __dirname,
+        "inference_worker.py"
+    );
 
-const knowledge = {
-    javascript: {
-        keywords: ["javascript", "js", "node", "nodejs"],
-        facts: [
-            "JavaScript ist eine Programmiersprache.",
-            "JavaScript kann im Browser und auf Servern laufen.",
-            "Mit Node.js kann JavaScript für Server verwendet werden."
-        ]
-    },
+app.use(
+    express.json({
+        limit: "10mb"
+    })
+);
 
-    tokenizer: {
-        keywords: ["tokenizer", "token", "tokenisierung"],
-        facts: [
-            "Ein Tokenizer zerlegt Text in einzelne Bestandteile.",
-            "Diese Bestandteile können Wörter, Zahlen und Satzzeichen sein.",
-            "Lumora verwendet dafür einen eigenen JavaScript-Tokenizer."
-        ]
-    },
 
-    render: {
-        keywords: ["render", "hosting", "server"],
-        facts: [
-            "Render kann Node.js-Webserver hosten.",
-            "Lumora kann als Node.js-Webservice auf Render laufen."
-        ]
-    },
+/* =========================================================
+   PYTHON WORKER
+========================================================= */
 
-    ki: {
-        keywords: ["ki", "künstliche", "intelligenz", "ai", "modell"],
-        facts: [
-            "Eine KI kann Texte analysieren und daraus Ausgaben erzeugen.",
-            "Größere Sprachmodelle verwenden neuronale Netze und Transformer.",
-            "Lumora kann später um ein eigenes Sprachmodell erweitert werden."
-        ]
-    }
-};
+let worker = null;
 
-/* =========================
-   FRAGE ERKENNEN
-========================= */
+let workerBuffer = "";
 
-function detectQuestion(text) {
-    const t = normalize(text);
+const pendingRequests =
+    new Map();
 
-    if (
-        t.includes("was ist") ||
-        t.includes("was bedeutet") ||
-        t.includes("erklär") ||
-        t.includes("erklaer") ||
-        t.includes("erkläre") ||
-        t.includes("wie funktioniert")
-    ) {
-        return "explain";
-    }
 
-    if (
-        t.includes("wer bist du") ||
-        t.includes("was bist du") ||
-        t.includes("wie heißt du") ||
-        t.includes("wie heisst du")
-    ) {
-        return "identity";
-    }
+function startWorker() {
 
-    if (
-        t.includes("kannst du") ||
-        t.includes("kannst")
-    ) {
-        return "ability";
-    }
+    console.log(
+        "[LUMORA] Starte Python-Worker..."
+    );
 
-    if (
-        t.endsWith("?") ||
-        t.startsWith("warum") ||
-        t.startsWith("wie")
-    ) {
-        return "question";
-    }
 
-    return "statement";
-}
+    worker = spawn(
+        PYTHON,
+        [
+            WORKER_FILE
+        ],
+        {
+            cwd: __dirname,
 
-/* =========================
-   THEMA ERKENNEN
-========================= */
+            stdio: [
+                "pipe",
+                "pipe",
+                "pipe"
+            ]
+        }
+    );
 
-function detectTopic(text) {
-    const tokenList = words(text);
 
-    let bestTopic = null;
-    let bestScore = 0;
+    worker.stdout.setEncoding(
+        "utf8"
+    );
 
-    for (const [topic, data] of Object.entries(knowledge)) {
-        let score = 0;
 
-        for (const keyword of data.keywords) {
-            if (tokenList.includes(normalize(keyword))) {
-                score++;
+    worker.stdout.on(
+        "data",
+        data => {
+
+            workerBuffer += data;
+
+
+            const lines =
+                workerBuffer.split("\n");
+
+
+            workerBuffer =
+                lines.pop() || "";
+
+
+            for (const line of lines) {
+
+                if (!line.trim()) {
+                    continue;
+                }
+
+
+                let result;
+
+
+                try {
+
+                    result =
+                        JSON.parse(line);
+
+                } catch (error) {
+
+                    console.error(
+                        "[WORKER] Ungültige Antwort:",
+                        line
+                    );
+
+                    continue;
+                }
+
+
+                const id =
+                    result.id;
+
+
+                const pending =
+                    pendingRequests.get(
+                        id
+                    );
+
+
+                if (!pending) {
+                    continue;
+                }
+
+
+                pendingRequests.delete(
+                    id
+                );
+
+
+                clearTimeout(
+                    pending.timeout
+                );
+
+
+                if (result.ok) {
+
+                    pending.resolve(
+                        result
+                    );
+
+                } else {
+
+                    pending.reject(
+                        new Error(
+                            result.error ||
+                            "Worker-Fehler"
+                        )
+                    );
+                }
             }
         }
+    );
 
-        if (score > bestScore) {
-            bestScore = score;
-            bestTopic = topic;
-        }
-    }
 
-    return bestTopic;
-}
+    worker.stderr.setEncoding(
+        "utf8"
+    );
 
-/* =========================
-   EIGENE ANTWORT ERZEUGEN
-========================= */
 
-function generateOwnAnswer(message) {
-    const questionType = detectQuestion(message);
-    const topic = detectTopic(message);
+    worker.stderr.on(
+        "data",
+        data => {
 
-    if (questionType === "identity") {
-        return [
-            "Ich bin Lumora.",
-            "Ich bin eine selbst entwickelte JavaScript-KI.",
-            "Mein Text wird zuerst mit tokenizer.js zerlegt.",
-            "Danach analysiere ich die Frage und suche nach passendem Wissen."
-        ].join(" ");
-    }
-
-    if (
-        containsWord(message, "hallo") ||
-        containsWord(message, "hi") ||
-        containsWord(message, "hey") ||
-        containsWord(message, "servus")
-    ) {
-        const greetings = [
-            "Hallo! Ich bin Lumora.",
-            "Hey! Lumora ist bereit.",
-            "Hallo! Ich habe deine Nachricht analysiert."
-        ];
-
-        return greetings[
-            Math.floor(Math.random() * greetings.length)
-        ];
-    }
-
-    if (
-        containsWord(message, "danke") ||
-        containsWord(message, "dankeschön") ||
-        containsWord(message, "dankeschoen")
-    ) {
-        return "Gerne!";
-    }
-
-    if (topic) {
-        const data = knowledge[topic];
-
-        if (questionType === "explain") {
-            const intro = {
-                javascript: "JavaScript ist eine Programmiersprache.",
-                tokenizer: "Ein Tokenizer ist ein Werkzeug zur Textanalyse.",
-                render: "Render ist eine Plattform für Webservices.",
-                ki: "Künstliche Intelligenz bezeichnet Systeme, die Daten analysieren und daraus Ausgaben erzeugen."
-            };
-
-            const facts = [...data.facts];
-
-            facts.sort(() => Math.random() - 0.5);
-
-            return (
-                intro[topic] +
-                " " +
-                facts
-                    .slice(0, Math.min(2, facts.length))
-                    .join(" ")
+            console.error(
+                "[WORKER]",
+                data.trim()
             );
         }
+    );
 
-        if (questionType === "ability") {
-            return (
-                "Ja. " +
-                data.facts[0] +
-                " " +
-                data.facts[1]
+
+    worker.on(
+        "error",
+        error => {
+
+            console.error(
+                "[WORKER ERROR]",
+                error.message
             );
         }
+    );
 
-        return (
-            "Ich habe Informationen über " +
-            topic +
-            ". " +
-            data.facts[
-                Math.floor(Math.random() * data.facts.length)
-            ]
-        );
-    }
 
-    const tokenList = tokenize(message);
-    const wordList = words(message);
+    worker.on(
+        "exit",
+        (code, signal) => {
 
-    if (wordList.length === 0) {
-        return "Schreib mir etwas, damit ich es analysieren kann.";
-    }
+            console.error(
+                "[WORKER EXIT]",
+                {
+                    code,
+                    signal
+                }
+            );
 
-    if (questionType === "question") {
-        return (
-            "Ich habe deine Frage analysiert. " +
-            "Sie enthält " +
-            wordList.length +
-            " Wörter und " +
-            tokenList.length +
-            " Tokens. " +
-            "Dazu habe ich momentan noch kein passendes Wissen."
-        );
-    }
 
-    return (
-        "Ich habe deinen Text analysiert. " +
-        "Er enthält " +
-        wordList.length +
-        " Wörter und " +
-        tokenList.length +
-        " Tokens. " +
-        "Mein Wissen kann später erweitert werden."
+            for (
+                const [
+                    id,
+                    pending
+                ]
+                of pendingRequests
+            ) {
+
+                clearTimeout(
+                    pending.timeout
+                );
+
+                pending.reject(
+                    new Error(
+                        "Python-Worker wurde beendet."
+                    )
+                );
+
+                pendingRequests.delete(
+                    id
+                );
+            }
+
+
+            worker = null;
+
+
+            /*
+                Nicht in einer engen Endlosschleife
+                neu starten.
+            */
+
+            setTimeout(
+                () => {
+
+                    if (!worker) {
+                        startWorker();
+                    }
+
+                },
+                3000
+            );
+        }
     );
 }
 
-/* =========================
-   CHAT API
-========================= */
 
-app.post("/api/chat", (req, res) => {
-    try {
-        const message = String(req.body?.message || "").trim();
+function sendToWorker(
+    action,
+    data = {},
+    timeoutMs = 120000
+) {
 
-        if (!message) {
-            return res.status(400).json({
-                error: "Keine Nachricht."
+    return new Promise(
+        (resolve, reject) => {
+
+            if (!worker) {
+
+                return reject(
+                    new Error(
+                        "KI-Worker ist noch nicht bereit."
+                    )
+                );
+            }
+
+
+            const id =
+                crypto.randomUUID();
+
+
+            const request = {
+
+                id,
+
+                action,
+
+                ...data
+
+            };
+
+
+            const timeout =
+                setTimeout(
+                    () => {
+
+                        pendingRequests.delete(
+                            id
+                        );
+
+                        reject(
+                            new Error(
+                                "KI-Anfrage hat das Zeitlimit überschritten."
+                            )
+                        );
+
+                    },
+                    timeoutMs
+                );
+
+
+            pendingRequests.set(
+                id,
+                {
+                    resolve,
+                    reject,
+                    timeout
+                }
+            );
+
+
+            try {
+
+                worker.stdin.write(
+                    JSON.stringify(
+                        request
+                    ) + "\n"
+                );
+
+            } catch (error) {
+
+                clearTimeout(
+                    timeout
+                );
+
+                pendingRequests.delete(
+                    id
+                );
+
+                reject(error);
+            }
+        }
+    );
+}
+
+
+/* =========================================================
+   START
+========================================================= */
+
+startWorker();
+
+
+/* =========================================================
+   FRONTEND
+========================================================= */
+
+app.get(
+    "/",
+    (req, res) => {
+
+        res.sendFile(
+            path.join(
+                __dirname,
+                "index.html"
+            )
+        );
+    }
+);
+
+
+/* =========================================================
+   CHAT
+========================================================= */
+
+app.post(
+    "/api/chat",
+    async (req, res) => {
+
+        try {
+
+            const message =
+                String(
+                    req.body?.message ||
+                    ""
+                ).trim();
+
+
+            if (!message) {
+
+                return res.status(
+                    400
+                ).json({
+
+                    error:
+                        "Keine Nachricht."
+
+                });
+            }
+
+
+            const result =
+                await sendToWorker(
+                    "generate",
+                    {
+
+                        text:
+                            message,
+
+                        max_new_tokens:
+                            Number(
+                                req.body?.max_new_tokens ||
+                                150
+                            ),
+
+                        temperature:
+                            Number(
+                                req.body?.temperature ??
+                                0.8
+                            ),
+
+                        top_k:
+                            Number(
+                                req.body?.top_k ||
+                                40
+                            ),
+
+                        top_p:
+                            Number(
+                                req.body?.top_p ??
+                                0.9
+                            )
+
+                    },
+                    180000
+                );
+
+
+            res.json({
+
+                answer:
+                    result.text,
+
+                model:
+                    "Lumora-750M",
+
+                tokens:
+                    tokenize(message),
+
+                tokenCount:
+                    tokenize(message).length,
+
+                generated:
+                    true
+
+            });
+
+        } catch (error) {
+
+            console.error(
+                "[CHAT]",
+                error
+            );
+
+
+            res.status(
+                503
+            ).json({
+
+                error:
+                    error.message
+
             });
         }
+    }
+);
 
-        const tokens = tokenize(message);
-        const questionType = detectQuestion(message);
-        const topic = detectTopic(message);
-        const answer = generateOwnAnswer(message);
+
+/* =========================================================
+   TOKENIZER
+========================================================= */
+
+app.post(
+    "/api/tokenize",
+    (req, res) => {
+
+        const text =
+            String(
+                req.body?.text ||
+                ""
+            );
+
+
+        const result =
+            tokenize(text);
+
 
         res.json({
-            answer,
-            tokens,
-            questionType,
-            topic
-        });
-    } catch (error) {
-        console.error(error);
 
-        res.status(500).json({
-            error: "Interner KI-Fehler."
+            text,
+
+            tokens:
+                result,
+
+            count:
+                result.length
+
         });
     }
-});
+);
 
-/* =========================
-   TOKENIZER API
-========================= */
 
-app.post("/api/tokenize", (req, res) => {
-    const text = String(req.body?.text || "");
+/* =========================================================
+   MODEL STATUS
+========================================================= */
 
-    res.json({
-        text,
-        tokens: tokenize(text)
-    });
-});
+app.get(
+    "/api/model",
+    async (req, res) => {
 
-/* =========================
+        try {
+
+            const result =
+                await sendToWorker(
+                    "health",
+                    {},
+                    30000
+                );
+
+
+            res.json({
+
+                online:
+                    true,
+
+                name:
+                    result.model,
+
+                device:
+                    result.device,
+
+                parameters:
+                    result.parameters,
+
+                parametersMillions:
+                    result.parameters /
+                    1000000,
+
+                trained:
+                    true
+
+            });
+
+        } catch (error) {
+
+            res.status(
+                503
+            ).json({
+
+                online:
+                    false,
+
+                error:
+                    error.message
+
+            });
+        }
+    }
+);
+
+
+/* =========================================================
    HEALTH
-========================= */
+========================================================= */
 
-app.get("/api/health", (req, res) => {
-    res.json({
-        online: true,
-        ai: "Lumora",
-        tokenizer: true,
-        ownAnswerGenerator: true,
-        topics: Object.keys(knowledge)
-    });
-});
+app.get(
+    "/api/health",
+    async (req, res) => {
 
-/* =========================
-   SERVER
-========================= */
+        try {
 
-app.listen(PORT, "0.0.0.0", () => {
-    console.log("================================");
-    console.log("          LUMORA ONLINE");
-    console.log("================================");
-    console.log("Tokenizer: AKTIV");
-    console.log("Antwortgenerator: AKTIV");
-    console.log("Wissensdatenbank: AKTIV");
-    console.log("Port:", PORT);
-});
+            const result =
+                await sendToWorker(
+                    "health",
+                    {},
+                    30000
+                );
+
+
+            res.json({
+
+                online:
+                    true,
+
+                lumora:
+                    true,
+
+                tokenizer:
+                    true,
+
+                transformer:
+                    true,
+
+                model:
+                    result.model,
+
+                device:
+                    result.device,
+
+                parameters:
+                    result.parameters,
+
+                trainedWeights:
+                    true
+
+            });
+
+        } catch (error) {
+
+            res.status(
+                503
+            ).json({
+
+                online:
+                    false,
+
+                lumora:
+                    true,
+
+                worker:
+                    false,
+
+                error:
+                    error.message
+
+            });
+        }
+    }
+);
+
+
+/* =========================================================
+   API 404
+========================================================= */
+
+app.use(
+    "/api",
+    (req, res) => {
+
+        res.status(
+            404
+        ).json({
+
+            error:
+                "API-Endpunkt nicht gefunden."
+
+        });
+    }
+);
+
+
+/* =========================================================
+   FRONTEND FALLBACK
+========================================================= */
+
+app.get(
+    "*",
+    (req, res) => {
+
+        res.sendFile(
+            path.join(
+                __dirname,
+                "index.html"
+            )
+        );
+    }
+);
+
+
+/* =========================================================
+   START SERVER
+========================================================= */
+
+app.listen(
+    PORT,
+    "0.0.0.0",
+    () => {
+
+        console.log("");
+        console.log(
+            "======================================"
+        );
+
+        console.log(
+            "       LUMORA 750M ONLINE"
+        );
+
+        console.log(
+            "======================================"
+        );
+
+        console.log(
+            "Port:",
+            PORT
+        );
+
+        console.log(
+            "Tokenizer: AKTIV"
+        );
+
+        console.log(
+            "Transformer: AKTIV"
+        );
+
+        console.log(
+            "Python Worker: AKTIV"
+        );
+
+        console.log(
+            "======================================"
+        );
+
+        console.log("");
+    }
+);
